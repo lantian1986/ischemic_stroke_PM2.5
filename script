@@ -1,0 +1,404 @@
+library(tidyverse)
+library(ggplot2)
+library(ggsci)
+library(patchwork)
+
+### the proportion of ischemic stroke attributed to AMP and HPM ###
+dat1 <- rio::import("./input/step01/IHME-GBD_2021_DATA-e53c55e0-1.zip")
+dat2 <- rio::import("./input/step01/IHME-GBD_2021_DATA-e53c55e0-2.zip")
+dat <- rbind(dat1, dat2)
+
+dat <- dat %>% 
+  mutate(measure = if_else(measure == "Deaths", "Deaths", "DALYs")) %>% 
+  mutate(rei = case_when(
+    rei == "Ambient particulate matter pollution" ~ "APM2.5",
+    rei == "Household air pollution from solid fuels" ~ "HPM2.5",
+    rei == "Particulate matter pollution" ~ "PM2.5",
+  ))
+
+# 1. percentage APM25 and HPM25 for death and DALY ------------------------
+
+res <- dat %>% 
+  filter(rei != "PM2.5", age == "All ages",
+         sex == "Both", metric == "Number",
+         year == 1990 |year == 2021)
+
+death90 <- res %>% 
+  filter(year == 1990, measure == "Deaths") %>% 
+  mutate(location = factor(location, levels = rev(loca_order), ordered = T)) %>% 
+  ggplot(aes(x = location, y = val, fill = rei)) +
+  geom_bar(stat = "identity", position = position_fill()) +
+  scale_y_continuous(labels = scales::percent) +
+  labs(x = "", y = '') + 
+  guides(fill = guide_legend(title = ''))+
+  labs(title = "Deaths in 1990")+
+  theme_bw()+
+  theme(legend.position = "right")+
+  coord_flip() +
+  ggsci::scale_fill_lancet(breaks = c("HPM2.5", "APM2.5"))
+
+death19 <- res %>% 
+  filter(year == 2021, measure == "Deaths") %>% 
+  mutate(location = factor(location, levels = rev(loca_order), ordered = T)) %>% 
+  ggplot(aes(x = location, y = val, fill = rei)) +
+  geom_bar(stat = "identity", position = position_fill()) +
+  scale_y_continuous(labels = scales::percent) +
+  labs(x = "", y = '') + 
+  guides(fill = guide_legend(title = ''))+
+  labs(title = "Deaths in 2021")+
+  theme_bw()+
+  theme(legend.position = "right")+
+  coord_flip() +
+  ggsci::scale_fill_lancet(breaks = c("HPM2.5", "APM2.5"))
+
+daly90 <-  res %>% 
+  filter(year == 1990, measure == "DALYs") %>% 
+  mutate(location = factor(location, levels = rev(loca_order), ordered = T)) %>% 
+  ggplot(aes(x = location, y = val, fill = rei)) +
+  geom_bar(stat = "identity", position = position_fill()) +
+  scale_y_continuous(labels = scales::percent) +
+  labs(x = "", y = '') + 
+  guides(fill = guide_legend(title = ''))+
+  labs(title = "DALYs in 1990")+
+  theme_bw()+
+  theme(legend.position = "right")+
+  coord_flip() +
+  ggsci::scale_fill_lancet(breaks = c("HPM2.5", "APM2.5"))
+
+daly19 <-  res %>% 
+  filter(year == 2021, measure == "DALYs") %>% 
+  mutate(location = factor(location, levels = rev(loca_order), ordered = T)) %>% 
+  ggplot(aes(x = location, y = val, fill = rei)) +
+  geom_bar(stat = "identity", position = position_fill()) +
+  scale_y_continuous(labels = scales::percent) +
+  labs(x = "", y = '') + 
+  guides(fill = guide_legend(title = ''))+
+  labs(title = "DALYs in 2021")+
+  theme_bw()+
+  theme(legend.position = "right")+
+  coord_flip() +
+  ggsci::scale_fill_lancet(breaks = c("HPM2.5", "APM2.5"))
+
+   	   
+	   
+### EAPC calculation and visualization ###   
+     	   
+dat1 <- rio::import("./input/step01/IHME-GBD_2021_DATA-e53c55e0-1.zip")
+dat2 <- rio::import("./input/step01/IHME-GBD_2021_DATA-e53c55e0-2.zip")
+dat <- rbind(dat1, dat2)
+
+# 1. EAPC age-specific death and daly rate by age and sex -----------------
+
+eapc <- function(x){
+  mod <- lm(val ~ year, x)
+  summary(mod)
+  mod$coefficients[2]
+  EAPC <- format(round(100*(exp(mod$coefficients[2])-1), 2), nsmall = 2)
+  CI <- format(round(100*confint(mod)[2, ],2), nsmall = 2)
+  CI <- paste(CI[1], CI[2], sep = ",")
+  return(paste(EAPC, CI, sep = ","))
+}
+
+res <- dat %>% 
+  filter(location == "Global", metric == "Rate", 
+         !age %in% c("Age-standardized", "All ages")) %>% 
+  mutate(measure = if_else(measure == "Deaths", "Death", "DALY"),
+         rei = case_when(
+           rei == "Ambient particulate matter pollution" ~ "APM2.5",
+           rei == "Household air pollution from solid fuels" ~ "HPM2.5",
+           rei == "Particulate matter pollution" ~ "PM2.5",
+         ),
+         age = str_split(age, " ", simplify = T)[, 1],
+         val = log(val)) 
+
+pm <- c("PM2.5","APM2.5", "HPM2.5")
+mea <- c("Death", "DALY")
+
+for(i in pm){
+  for(j in mea){
+    pdf(paste0(i,j,"_eapc_by_age_sex_pointplot.pdf"), width = 7, height = 6)
+    tmp <- res %>%
+      filter(rei == i, measure == j) %>%
+      group_by(sex, age) %>%
+      do(eapc_result = eapc(.)) %>%
+      ungroup() %>% 
+      mutate(eapc = as.numeric(str_split(eapc_result, ",", simplify = T)[, 1]),
+             up = as.numeric(str_split(eapc_result, ",", simplify = T)[, 2]),
+             down = as.numeric(str_split(eapc_result, ",", simplify = T)[, 3])) %>% 
+      ggplot(aes(x = age, y = eapc, color = sex)) +
+      geom_point(position = position_dodge(0.6)) +
+      geom_errorbar(aes(ymax = up, ymin = down),
+                    position = position_dodge(0.6), width = 0.4) +
+      labs(x = "", y = paste("EAPC in", j, "Rate", sep = " ")) +
+      theme(legend.background = element_blank(),
+            legend.key = element_blank(), 
+            legend.text = element_text(size = 11, lineheight = 1, color = "black"),
+            legend.position = "right",
+            legend.title = element_blank(),
+            panel.grid=element_blank(),
+            axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, 
+                                       size = 12, color = "black"),
+            axis.text.y = element_text(size = 12, color = "black"),
+            axis.title.x = element_text(size = 14, hjust = 0.5, vjust = -0.5),
+            axis.title.y = element_text(size = 14, hjust = 0.5),
+            strip.text.x = element_text(size = 14),
+            strip.text.y = element_text(size = 14),
+            panel.background = element_rect(fill='transparent', color='black', size = 1),
+            title = element_text(size = 14, color = "black", hjust = 0.2)) +
+      scale_color_lancet()
+    print(tmp)
+    dev.off()
+  }
+}
+
+
+### EAPC of GBD regions ###
+dat1 <- rio::import("./input/step01/IHME-GBD_2021_DATA-e53c55e0-1.zip")
+dat2 <- rio::import("./input/step01/IHME-GBD_2021_DATA-e53c55e0-2.zip")
+dat <- rbind(dat1, dat2)
+
+dat <- dat %>% 
+  mutate(measure = if_else(measure == "Deaths", "Deaths", "DALYs"),
+         rei = case_when(
+           rei == "Ambient particulate matter pollution" ~ "APM2.5",
+           rei == "Household air pollution from solid fuels" ~ "HPM2.5",
+           rei == "Particulate matter pollution" ~ "PM2.5",
+         ),
+         location = factor(location, levels = loca_order, ordered = T)) 
+
+# 1. EAPC -----------------------------------------------------------------
+
+eapc <- function(x){
+  fit_model <- glm(val ~ year, family = gaussian, x)
+  
+  coef <- coefficients(fit_model)[2]
+  # And get the Confidence Intervals parameter:
+  lower25 <- confint(fit_model)[2]
+  upper975 <- confint(fit_model)[4]
+  # Thus, EAPC and its lower and upper boundary of 95% CI can be computed by:
+  eapc <- format(round((exp(coef) - 1)*100, 2), nsmall = 2)
+  lower <- format(round((exp(lower25) - 1)*100, 2), nsmall = 2)
+  upper <- format(round((exp(upper975) - 1)*100, 2), nsmall = 2)
+  
+  return(paste(eapc, lower, upper, sep = ","))
+}
+
+res_eapc <- dat %>%
+  mutate(val = log(val),
+         measure = ifelse(measure == "Deaths", "ASMR", "ASDR")) %>% 
+  filter(age == "Age-standardized",sex == "Both", metric == "Rate") %>%
+  group_by(location, rei, measure) %>%
+  do(eapc_result = eapc(.)) %>%
+  ungroup() %>% 
+  unite(variable, rei, measure, sep = "_") %>%
+  pivot_wider(names_from = variable, values_from = eapc_result) %>% 
+  mutate_at(vars(-location), ~map_chr(.x, toString))
+
+index <- c("ASMR", "ASDR")
+
+for(i in index){
+  pdf(paste0("barplot_", i, "_EAPC_by_pm_region.pdf"), width = 12, height = 8)
+  p <- res_eapc %>% 
+    pivot_longer(cols = ends_with(i), 
+                 names_to = "variable", values_to = "value") %>% 
+    mutate(val = as.numeric(str_split(value, ",", simplify = T)[, 1]),
+           lower = as.numeric(str_split(value, ",", simplify = T)[, 2]),
+           uper = as.numeric(str_split(value, ",", simplify = T)[, 3])) %>% 
+    ggplot(aes(x = location, y = val, fill = variable)) +
+    geom_bar(stat="identity", color="black", 
+             position=position_dodge(0.7), width = 0.7) +
+    geom_errorbar(aes(ymin=lower, ymax=uper), width=.3,
+                  position=position_dodge(.7)) +
+    # scale_y_continuous(limits = c(-16, 10), breaks = seq(-16, 10, by = 2)) +
+    scale_fill_discrete(labels = c("APM2.5", "HPM2.5", "PM2.5")) +
+    labs(x = "", y = paste0("EAPC for ", i)) +
+    theme(legend.background = element_blank(),
+          legend.key = element_blank(), 
+          legend.text = element_text(size = 11, lineheight = 1, color = "black"),
+          legend.position = "right",
+          legend.title = element_blank(),
+          panel.grid=element_blank(),
+          axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, 
+                                     size = 12, color = "black"),
+          axis.text.y = element_text(size = 12, color = "black"),
+          axis.title.x = element_text(size = 14, hjust = 0.5, vjust = -0.5),
+          axis.title.y = element_text(size = 14, hjust = 0.5),
+          strip.text.x = element_text(size = 14),
+          strip.text.y = element_text(size = 14),
+          panel.background = element_rect(fill='transparent', color='black', size = 1),
+          title = element_text(size = 14, color = "black", hjust = 0.2)) 
+  print(p)
+  dev.off()
+}
+
+
+### decomposition analysis ###
+
+rm(list = ls())
+library(tidyverse)
+library(ggplot2)
+library(ggsci)
+
+num_asr <- rio::import("./input/step10/IHME-GBD_2021_DATA-4f719279-1.zip")
+pop <- rio::import("./input/population/IHME-GBD_2021_DATA-7e6e2baa-1.zip")
+
+loc <- c("Global", "Low SDI", "Low-middle SDI", "Middle SDI",
+         "High-middle SDI", "High SDI")
+
+# 1. 3 datas modified -----------------------------------------------------------
+
+num_asr <- num_asr %>% 
+  mutate(location = factor(location, levels = loc, ordered = T),
+         measure = if_else(measure == "Deaths", "Deaths", "DALYs"),
+         rei = case_when(
+           rei == "Ambient particulate matter pollution" ~ "APM2.5",
+           rei == "Household air pollution from solid fuels" ~ "HPM2.5",
+           rei == "Particulate matter pollution" ~ "PM2.5"),
+         age = str_split(age, " ", simplify = T)[, 1]) %>% 
+  filter(sex == "Both", year == 1990|year == 2021) %>% 
+  select(1,2,4,6,7,8,9) %>% 
+  arrange(location, age) %>% 
+  pivot_wider(names_from = c(measure, metric, year), values_from = val)
+
+ageindex <- dput(unique(num_asr$age))
+
+pop90 <- pop %>% 
+  select(2,3,4,6,7) %>%
+  mutate(age = str_split(age, " ", simplify = T)[, 1]) %>% 
+  filter(age %in%  ageindex, location %in% loc, 
+         sex == "Both", year == 1990) %>% 
+  arrange(location, age)
+
+pop19 <- pop %>% 
+  select(2,3,4,6,7) %>%
+  mutate(age = str_split(age, " ", simplify = T)[, 1]) %>% 
+  filter(age %in%  ageindex, location %in% loc, 
+         sex == "Both", year == 2021) %>% 
+  arrange(location, age)
+
+# 2. decomposition analysis -----------------------------------------------
+
+pop19 <- pop19 %>% 
+  group_by(location) %>% 
+  summarise(pop19 = sum(val)) %>% 
+  right_join(pop19) %>% 
+  mutate(pro19 = val/pop19) %>% 
+  select(1,4,2,7)
+
+pop90 <- pop90 %>% 
+  group_by(location) %>% 
+  summarise(pop90 = sum(val)) %>% 
+  right_join(pop90) %>% 
+  mutate(pro90 = val/pop90) %>% 
+  select(1,4,2,7)
+
+measures <- c("Deaths", "DALYs")
+reis <- c("PM2.5", "APM2.5", "HPM2.5")
+locations <- loc
+
+df <- data.frame(measure = character(),
+                 rei = character(),
+                 location = character(),
+                 stringsAsFactors = FALSE)
+
+for (measure in measures) {
+  for (rei in reis) {
+    for (location in locations) {
+      row <- data.frame(measure = measure, rei = rei, location = location)
+      df <- rbind(df, row)
+    }
+  }
+}
+
+df2 <- as.data.frame(matrix(nrow = 36, ncol = 7))
+colnames(df2) <- c("total_diff", "p_grwoth", "p_aging", "epid_diff",
+                   "pro_p_grwoth", "pro_p_aging", "pro_p_epid_diff")
+
+df <- cbind(df, df2)
+
+for(i in c(1:36)){
+  colkeep <- grep(df[i, 1], colnames(num_asr)) 
+  res <- num_asr %>% 
+    filter(rei == df[i, 2]) %>% 
+    select(1:2, colkeep) %>% 
+    inner_join(pop90) %>% 
+    inner_join(pop19) %>% 
+    filter(location == df[i, 3]) 
+  colnames(res)[-c(1:2)] <- c("Deaths90", "Mortality90", "Deaths19", "Mortality19", 
+                              "pop90", "pro90", "pop19", "pro19")
+  
+  Mp <- sum((res$pop19-res$pop90)*res$pro90*res$Mortality90)
+  Ms <- sum(res$pop90*(res$pro19-res$pro90)*res$Mortality90)
+  Mm <- sum(res$pop90*res$pro90*(res$Mortality19-res$Mortality90))
+  
+  Ips <-  sum((res$pop19-res$pop90)*(res$pro19-res$pro90)*res$Mortality90)
+  Ipm <- sum((res$pop19-res$pop90)*res$pro90*(res$Mortality19-res$Mortality90))
+  Ism <- sum(res$pop90*(res$pro19-res$pro90)*(res$Mortality19-res$Mortality90))
+  Ipsm <- sum((res$pop19-res$pop90)*(res$pro19-res$pro90)*(res$Mortality19-res$Mortality90))
+  
+  PS <- Mp + Ipm/2 +Ips/2 +Ipsm/3
+  AS <- Ms + Ism/2 +Ips/2 +Ipsm/3
+  ASR <- Mm + Ipm/2 + Ism/2 + Ipsm/3
+  
+  total_diff <- PS+AS+ASR
+  
+  proPS <- PS/(PS+AS+ASR)
+  proAS <- AS/(PS+AS+ASR)
+  proASR <- ASR/(PS+AS+ASR)
+  
+  df[i, 4] <- total_diff
+  df[i, 5] <- PS
+  df[i, 6] <- AS
+  df[i, 7] <- ASR
+  df[i, 8] <- proPS
+  df[i, 9] <- proAS
+  df[i, 10] <- proASR
+  print(i)
+}
+
+
+# 3. visualization -------------------------------------------------------------------
+
+rm(list = ls())
+library(tidyverse)
+library(ggplot2)
+library(ggsci)
+res <- readRDS("res_decompositon_analysis_global_sdi.rds")
+
+
+index <- c("Deaths", "DALYs")
+for(i in c(1:2)){
+  df <- res[, c(1,2,3,5:7)] %>% 
+    filter(measure == index[i]) %>% 
+    pivot_longer(cols = c(4:6), names_to = "variable", values_to = "val") %>% 
+    left_join(res[, c(1:4)]) %>% 
+    mutate(rei = factor(rei, 
+                        levels = c("PM2.5", "APM2.5", "HPM2.5"), 
+                        ordered = T),
+           location = factor(location,
+                             levels = rev(c("Global", "Low SDI", "Low-middle SDI", "Middle SDI",
+                                            "High-middle SDI", "High SDI")),
+                             ordered = T),
+           variable = case_when(
+             variable == "epid_diff" ~ "Epidemiologcial Change",
+             variable == "p_aging" ~ "Population Aging",
+             variable == "p_grwoth" ~ "Popuation Growth",
+           ))
+  
+  pdf(paste0("decomposition_analysis_", index[i],".pdf"), width = 6, height = 9) 
+  p <- ggplot(df, aes(x=location, y=val)) +
+    geom_bar(aes(fill=variable), stat="identity") +
+    geom_point(aes(x=location, y=total_diff)) +
+    scale_y_continuous(labels = function(x) x/100000000)+
+    labs(x = "",
+         y = paste0("Change in ", index[i], ", 1990-2021 \n(×100,000,000)")) + 
+    coord_flip() + 
+    facet_wrap(rei~., scales = "free", ncol = 1) +
+    theme_bw()+
+    theme(legend.title = element_blank(),
+          strip.background = element_blank()) +
+    ggsci::scale_fill_lancet()
+  print(p)
+  dev.off()
+  print(i)
+}
